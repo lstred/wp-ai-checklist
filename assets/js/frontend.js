@@ -140,11 +140,17 @@
         }
         console.log( '[AICWF] Found upload container:', uploadContainer.id || uploadContainer );
 
-        var insertAfterEl = uploadContainer;
+        // Insert the button and review panel directly on the <form> element,
+        // before the submit container. This is outside any inner wrapper divs
+        // that might have overflow:hidden or other layout constraints.
+        var reviewPanel  = createReviewPanel( mapping );
+        var submitWrap   = formEl.querySelector( '.wpforms-submit-container' );
 
-        // Create and insert the review panel immediately after the field container.
-        var reviewPanel = createReviewPanel( mapping );
-        insertAfterEl.parentNode.insertBefore( reviewPanel, insertAfterEl.nextSibling );
+        if ( submitWrap ) {
+            formEl.insertBefore( reviewPanel, submitWrap );
+        } else {
+            formEl.appendChild( reviewPanel );
+        }
 
         if ( mapping.auto_analyze ) {
             // Listen on any native file input inside the container.
@@ -162,9 +168,10 @@
             observeHiddenInput( formEl, mapping, reviewPanel, null );
 
         } else {
-            // Insert the "Analyze Image" button between the container and the panel.
+            // Insert the "Analyze Image" button right before the review panel.
             var btn = createAnalyzeButton( mapping );
-            insertAfterEl.parentNode.insertBefore( btn, reviewPanel );
+            reviewPanel.parentNode.insertBefore( btn, reviewPanel );
+            console.log( '[AICWF] Analyze button inserted:', btn );
 
             btn.addEventListener( 'click', function ( e ) {
                 e.preventDefault();
