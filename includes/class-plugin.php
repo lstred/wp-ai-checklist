@@ -32,7 +32,12 @@ class AICWF_Plugin {
 
 	private function init_hooks() {
 		add_action( 'rest_api_init',      array( $this, 'register_rest_routes' ) );
-		add_action( 'wp_enqueue_scripts', array( $this, 'maybe_enqueue_frontend_assets' ) );
+		add_action( 'wp_enqueue_scripts', array( $this, 'register_frontend_assets' ) );
+
+		// Hook into WPForms' output action — fires whenever a form is actually rendered.
+		// This is reliable regardless of how the form is embedded (shortcode, block,
+		// page builder, widget, template file, etc.).
+		add_action( 'wpforms_frontend_output', array( $this, 'on_wpforms_output' ), 5, 1 );
 
 		if ( is_admin() ) {
 			new AICWF_Admin();
@@ -92,117 +97,118 @@ class AICWF_Plugin {
 	// -------------------------------------------------------------------------
 
 	/**
-	 * Only enqueue plugin scripts on pages that contain a configured, enabled form.
+	 * Register (but do not enqueue) frontend assets early so they are available
+	 * to wp_enqueue later in the same request.
 	 */
-	public function maybe_enqueue_frontend_assets() {
-		if ( is_admin() ) {
-			return;
-		}
-
-		global $post;
-		if ( ! $post instanceof WP_Post ) {
-			return;
-		}
-
-		$settings        = AICWF_Settings::get_settings();
-		$active_mappings = array_filter(
-			$settings['mappings'] ?? array(),
-			function ( $m ) {
-				return ! empty( $m['enabled'] ) && ! empty( $m['form_id'] );
-			}
-		);
-
-		if ( empty( $active_mappings ) ) {
-			return;
-		}
-
-		$configured_form_ids = array_unique(
-			array_map( function ( $m ) { return (int) $m['form_id']; }, $active_mappings )
-		);
-
-		$found_form_ids = $this->detect_form_ids_in_post( $post );
-
-		$relevant_ids = array_intersect( $configured_form_ids, $found_form_ids );
-		if ( empty( $relevant_ids ) ) {
-			return;
-		}
-
-		$page_mappings = array_values(
-			array_filter(
-				$active_mappings,
-				function ( $m ) use ( $relevant_ids ) {
-					return in_array( (int) $m['form_id'], $relevant_ids, true );
-				}
-			)
-		);
-
-		$this->enqueue_frontend_scripts( $page_mappings );
-	}
-
-	/**
-	 * Detect WPForms form IDs embedded in a post (shortcodes + Gutenberg blocks).
-	 *
-	 * @param WP_Post $post
-	 * @return int[]
-	 */
-	private function detect_form_ids_in_post( WP_Post $post ) {
-		$content  = $post->post_content;
-		$form_ids = array();
-
-		// [wpforms id="123" ...] shortcodes.
-		if ( has_shortcode( $content, 'wpforms' ) ) {
-			preg_match_all( '/\[wpforms[^\]]*\bid=["\']?(\d+)/i', $content, $m );
-			if ( ! empty( $m[1] ) ) {
-				$form_ids = array_merge( $form_ids, array_map( 'intval', $m[1] ) );
-			}
-		}
-
-		// Gutenberg wpforms block: <!-- wp:wpforms/form-selector {"formId":"123"} -->
-		preg_match_all( '/"formId"\s*:\s*["\']?(\d+)/i', $content, $m );
-		if ( ! empty( $m[1] ) ) {
-			$form_ids = array_merge( $form_ids, array_map( 'intval', $m[1] ) );
-		}
-
-		return array_unique( $form_ids );
-	}
-
-	/**
-	 * Enqueue scripts and pass safe (no API keys) localised data.
-	 *
-	 * @param array[] $page_mappings
-	 */
-	private function enqueue_frontend_scripts( array $page_mappings ) {
-		wp_enqueue_style(
+	public function register_frontend_assets() {
+		wp_register_style(
 			'aicwf-frontend',
 			AICWF_PLUGIN_URL . 'assets/css/frontend.css',
 			array(),
 			AICWF_VERSION
 		);
 
-		wp_enqueue_script(
+		wp_register_script(
 			'aicwf-frontend',
 			AICWF_PLUGIN_URL . 'assets/js/frontend.js',
 			array( 'jquery' ),
 			AICWF_VERSION,
 			true
 		);
+	}
 
-		$js_mappings = array_map(
-			function ( $m ) {
-				return array(
-					'id'                  => sanitize_key( $m['id'] ?? '' ),
-					'form_id'             => (int) ( $m['form_id'] ?? 0 ),
-					'image_field_id'      => (int) ( $m['image_field_id'] ?? 0 ),
-					'checklist_field_ids' => array_map( 'intval', $m['checklist_field_ids'] ?? array() ),
-					'action_mode'         => in_array( $m['action_mode'] ?? '', array( 'check', 'uncheck' ), true )
-						? $m['action_mode']
-						: 'check',
-					'auto_analyze'        => ! empty( $m['auto_analyze'] ),
-					'button_label'        => esc_html( $m['button_label'] ?? __( 'Analyze Image', 'ai-checklist-wpf' ) ),
-				);
-			},
-			$page_mappings
+	/**
+	 * Fires every time WPForms renders a form on the front end.
+	 * Enqueues our scripts and localises data if the form has an active mapping.
+	 *
+	 * Hooked to wpforms_frontend_output (priority 5) so we fire before WPForms
+	 * outputs its own footer scripts.
+	 *
+	 * @param array $form_data  WPForms form data array (contains form_data['id']).
+	 */
+	public function on_wpforms_output( $form_data ) {
+		if ( is_admin() ) {
+			return;
+		}
+
+		$form_id = (int) ( $form_data['id'] ?? 0 );
+		if ( ! $form_id ) {
+			return;
+		}
+
+		$settings        = AICWF_Settings::get_settings();
+		$active_mappings = array_values(
+			array_filter(
+				$settings['mappings'] ?? array(),
+				function ( $m ) use ( $form_id ) {
+					return ! empty( $m['enabled'] )
+						&& (int) ( $m['form_id'] ?? 0 ) === $form_id;
+				}
+			)
 		);
+
+		if ( empty( $active_mappings ) ) {
+			return;
+		}
+
+		// Scripts may already be enqueued if two configured forms are on the same page.
+		if ( ! wp_script_is( 'aicwf-frontend', 'enqueued' ) ) {
+			$this->enqueue_frontend_scripts( $active_mappings );
+		} else {
+			// Merge this form's mappings into the already-localised data.
+			$this->merge_frontend_mappings( $active_mappings );
+		}
+	}
+
+	/**
+	 * Append additional mappings to the already-localised aicwfData object.
+	 * Called when a second (or third) configured form appears on the same page.
+	 *
+	 * @param array[] $new_mappings
+	 */
+	private function merge_frontend_mappings( array $new_mappings ) {
+		// wp_add_inline_script appends JS that extends the already-set aicwfData.mappings.
+		$js_mappings = $this->build_js_mappings( $new_mappings );
+		$json        = wp_json_encode( $js_mappings );
+		wp_add_inline_script(
+			'aicwf-frontend',
+			'if(window.aicwfData){aicwfData.mappings=aicwfData.mappings.concat(' . $json . ');}',
+			'after'
+		);
+	}
+
+	/**
+	 * Build the JS-safe mappings array (no API keys, sanitised values).
+	 *
+	 * @param array[] $mappings
+	 * @return array[]
+	 */
+	private function build_js_mappings( array $mappings ) {
+		return array_values(
+			array_map(
+				function ( $m ) {
+					return array(
+						'id'                  => sanitize_key( $m['id'] ?? '' ),
+						'form_id'             => (int) ( $m['form_id'] ?? 0 ),
+						'image_field_id'      => (int) ( $m['image_field_id'] ?? 0 ),
+						'checklist_field_ids' => array_map( 'intval', $m['checklist_field_ids'] ?? array() ),
+						'action_mode'         => in_array( $m['action_mode'] ?? '', array( 'check', 'uncheck' ), true )
+							? $m['action_mode']
+							: 'check',
+						'auto_analyze'        => ! empty( $m['auto_analyze'] ),
+						'button_label'        => esc_html( $m['button_label'] ?? __( 'Analyze Image', 'ai-checklist-wpf' ) ),
+					);
+				},
+				$mappings
+			)
+		);
+	}
+
+	private function enqueue_frontend_scripts( array $page_mappings ) {
+		wp_enqueue_style( 'aicwf-frontend' );
+		wp_enqueue_script( 'aicwf-frontend' );
+
+		$js_mappings = $this->build_js_mappings( $page_mappings );
 
 		wp_localize_script(
 			'aicwf-frontend',
@@ -270,19 +276,50 @@ class AICWF_Plugin {
 			);
 		}
 
-		// Validate uploaded file.
-		$files = $request->get_file_params();
-		if ( empty( $files['image'] ) || (int) ( $files['image']['error'] ?? 1 ) !== UPLOAD_ERR_OK ) {
+		// Resolve the image path: either a direct file upload or a WPForms temp URL.
+		$files     = $request->get_file_params();
+		$image_url = sanitize_text_field( (string) ( $request->get_param( 'image_url' ) ?? '' ) );
+
+		$tmp_path      = '';
+		$tmp_created   = false; // true if we created a temp file from a URL fetch.
+
+		if ( ! empty( $files['image'] ) && (int) ( $files['image']['error'] ?? 1 ) === UPLOAD_ERR_OK ) {
+			// Standard file upload.
+			$file_check = $security->validate_image_file( $files['image'] );
+			if ( is_wp_error( $file_check ) ) {
+				return $file_check;
+			}
+			$tmp_path = $files['image']['tmp_name'];
+
+		} elseif ( ! empty( $image_url ) ) {
+			// WPForms Dropzone already uploaded the file; we receive its URL.
+			// Only allow URLs from the same site to prevent SSRF.
+			$resolved = $this->resolve_local_image_url( $image_url );
+			if ( is_wp_error( $resolved ) ) {
+				return $resolved;
+			}
+
+			$tmp_path    = $resolved;
+			$tmp_created = true; // resolved to a local filesystem path.
+
+			// Validate the resolved file.
+			$fake_file  = array(
+				'tmp_name' => $tmp_path,
+				'name'     => basename( $tmp_path ),
+				'size'     => filesize( $tmp_path ),
+				'error'    => UPLOAD_ERR_OK,
+			);
+			$file_check = $security->validate_image_file( $fake_file );
+			if ( is_wp_error( $file_check ) ) {
+				return $file_check;
+			}
+
+		} else {
 			return new WP_Error(
 				'no_image',
 				__( 'No valid image was provided.', 'ai-checklist-wpf' ),
 				array( 'status' => 400 )
 			);
-		}
-
-		$file_check = $security->validate_image_file( $files['image'] );
-		if ( is_wp_error( $file_check ) ) {
-			return $file_check;
 		}
 
 		// Fetch checklist labels from WPForms (read-only).
@@ -307,7 +344,7 @@ class AICWF_Plugin {
 		// Run AI analysis.
 		$settings = AICWF_Settings::get_settings();
 		$analyzer = new AICWF_Image_Analyzer( $settings );
-		$result   = $analyzer->analyze( $files['image']['tmp_name'], $checklist_data, $mapping );
+		$result   = $analyzer->analyze( $tmp_path, $checklist_data, $mapping );
 
 		if ( is_wp_error( $result ) ) {
 			AICWF_Logger::log( 'Analysis error: ' . $result->get_error_message() );
@@ -324,6 +361,62 @@ class AICWF_Plugin {
 		$result['form_id'] = $form_id;
 
 		return rest_ensure_response( $result );
+	}
+
+	/**
+	 * Validate that an image_url belongs to this site and resolve it to an
+	 * absolute filesystem path (via ABSPATH mapping).
+	 * Prevents SSRF by rejecting all external or non-image URLs.
+	 *
+	 * @param string $url
+	 * @return string|WP_Error  Absolute path on success.
+	 */
+	private function resolve_local_image_url( $url ) {
+		$site_url = trailingslashit( site_url() );
+
+		// Must start with the site URL (same origin).
+		if ( 0 !== strpos( $url, $site_url ) ) {
+			return new WP_Error(
+				'external_url',
+				__( 'Image URL must be from the same site.', 'ai-checklist-wpf' ),
+				array( 'status' => 400 )
+			);
+		}
+
+		// Map URL to filesystem path.
+		$relative = substr( $url, strlen( $site_url ) );
+		$abs_path = realpath( ABSPATH . $relative );
+
+		// realpath() returns false for non-existent or path-traversal paths.
+		if ( false === $abs_path ) {
+			return new WP_Error(
+				'file_not_found',
+				__( 'Uploaded image file could not be located.', 'ai-checklist-wpf' ),
+				array( 'status' => 400 )
+			);
+		}
+
+		// Ensure the resolved path is still within ABSPATH.
+		if ( 0 !== strpos( $abs_path, realpath( ABSPATH ) ) ) {
+			return new WP_Error(
+				'path_traversal',
+				__( 'Invalid image path.', 'ai-checklist-wpf' ),
+				array( 'status' => 400 )
+			);
+		}
+
+		// Validate file extension before handing to full MIME check.
+		$allowed_ext = array( 'jpg', 'jpeg', 'png', 'webp', 'gif' );
+		$ext         = strtolower( pathinfo( $abs_path, PATHINFO_EXTENSION ) );
+		if ( ! in_array( $ext, $allowed_ext, true ) ) {
+			return new WP_Error(
+				'invalid_extension',
+				__( 'Only image files are accepted.', 'ai-checklist-wpf' ),
+				array( 'status' => 400 )
+			);
+		}
+
+		return $abs_path;
 	}
 
 	public function handle_get_forms( WP_REST_Request $request ) {

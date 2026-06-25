@@ -30,38 +30,119 @@
         data.mappings.forEach( initMapping );
     }
 
+    /**
+     * Find the WPForms form element using several fallback selectors.
+     * WPForms renders: <form id="wpforms-form-{id}"> OR <div class="wpforms-container"> containing it.
+     */
+    function findFormEl( formId ) {
+        return document.getElementById( 'wpforms-form-' + formId )
+            || document.querySelector( '[data-formid="' + formId + '"]' )
+            || document.querySelector( '.wpforms-form[data-formid="' + formId + '"]' )
+            || null;
+    }
+
+    /**
+     * Find the upload input for a given field ID within a form.
+     * WPForms file-upload fields may be:
+     *   - A standard <input type="file" id="wpforms-{form}-field_{field}">
+     *   - Inside a Dropzone wrapper where the input is hidden; we find the
+     *     nearest real file input inside the field container.
+     */
+    function findUploadInput( formEl, formId, fieldId ) {
+        // Try canonical ID first.
+        var byId = document.getElementById( 'wpforms-' + formId + '-field_' + fieldId );
+        if ( byId ) {
+            return byId;
+        }
+
+        // Fall back: find any file input inside the field container.
+        var container = findFieldContainer( formEl, formId, fieldId );
+        if ( container ) {
+            var fileInput = container.querySelector( 'input[type="file"]' );
+            if ( fileInput ) {
+                return fileInput;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Find the outermost container div for a field.
+     * WPForms uses: <div id="wpforms-{form}-field_{field}-container" class="wpforms-field ...">
+     * or just a div with the field class containing the field.
+     */
+    function findFieldContainer( formEl, formId, fieldId ) {
+        // Canonical container ID.
+        var byContainerId = document.getElementById(
+            'wpforms-' + formId + '-field_' + fieldId + '-container'
+        );
+        if ( byContainerId ) {
+            return byContainerId;
+        }
+
+        // Some WPForms versions / themes use a div without -container suffix.
+        // Search inside the form for the field wrapper.
+        if ( formEl ) {
+            var candidate = formEl.querySelector(
+                '[id="wpforms-' + formId + '-field_' + fieldId + '"]'
+            );
+            if ( candidate ) {
+                // Walk up to the .wpforms-field wrapper.
+                var parent = candidate.parentElement;
+                while ( parent && parent !== formEl ) {
+                    if ( parent.classList.contains( 'wpforms-field' ) ) {
+                        return parent;
+                    }
+                    parent = parent.parentElement;
+                }
+            }
+        }
+
+        return null;
+    }
+
     function initMapping( mapping ) {
-        var formEl = document.getElementById( 'wpforms-form-' + mapping.form_id );
+        var formEl = findFormEl( mapping.form_id );
         if ( ! formEl ) {
+            // Form not on this page — silent return is correct.
             return;
         }
 
-        var uploadInput = document.getElementById(
-            'wpforms-' + mapping.form_id + '-field_' + mapping.image_field_id
-        );
-        var uploadContainer = document.getElementById(
-            'wpforms-' + mapping.form_id + '-field_' + mapping.image_field_id + '-container'
-        );
+        var uploadInput     = findUploadInput( formEl, mapping.form_id, mapping.image_field_id );
+        var uploadContainer = findFieldContainer( formEl, mapping.form_id, mapping.image_field_id );
 
-        if ( ! uploadInput || ! uploadContainer ) {
+        if ( ! uploadInput ) {
+            // Log to console only when WP_DEBUG equivalent is set via a data attribute.
             return;
         }
 
-        // Create and insert the review panel immediately after the upload container.
+        // If we couldn't find the container, insert relative to the input's parent.
+        var insertAfterEl = uploadContainer || uploadInput.closest( '.wpforms-field' ) || uploadInput.parentElement;
+
+        // Create and insert the review panel immediately after the field container.
         var reviewPanel = createReviewPanel( mapping );
-        uploadContainer.parentNode.insertBefore( reviewPanel, uploadContainer.nextSibling );
+        insertAfterEl.parentNode.insertBefore( reviewPanel, insertAfterEl.nextSibling );
 
         if ( mapping.auto_analyze ) {
             // Trigger automatically when a file is chosen.
+            // WPForms Dropzone fires a change event on the hidden input after upload.
             uploadInput.addEventListener( 'change', function () {
                 if ( uploadInput.files && uploadInput.files.length > 0 ) {
+                    runAnalysis( mapping, uploadInput, null, reviewPanel );
+                }
+            } );
+            // Also listen on the form element for WPForms' custom dropzone events.
+            formEl.addEventListener( 'wpformsFileUploadComplete', function ( e ) {
+                var detail = e.detail || {};
+                if ( String( detail.fieldId ) === String( mapping.image_field_id ) ) {
                     runAnalysis( mapping, uploadInput, null, reviewPanel );
                 }
             } );
         } else {
             // Insert the "Analyze Image" button between the container and the panel.
             var btn = createAnalyzeButton( mapping );
-            uploadContainer.parentNode.insertBefore( btn, reviewPanel );
+            insertAfterEl.parentNode.insertBefore( btn, reviewPanel );
 
             btn.addEventListener( 'click', function ( e ) {
                 e.preventDefault();
@@ -96,8 +177,60 @@
     // Analysis request
     // -------------------------------------------------------------------------
 
+    /**
+     * Get the file to analyze.
+     * Returns a File object if the native input still holds it, otherwise
+     * looks for the WPForms Dropzone-uploaded temp-file URL stored in the
+     * hidden value input that WPForms populates after an async upload.
+     *
+     * @param {HTMLElement} formEl
+     * @param {HTMLInputElement} uploadInput
+     * @param {Object} mapping
+     * @return {{ file: File|null, tempUrl: string|null }}
+     */
+    function getUploadedFile( formEl, uploadInput, mapping ) {
+        // Case 1: native file input still has the file (standard uploader).
+        if ( uploadInput && uploadInput.files && uploadInput.files.length > 0 ) {
+            return { file: uploadInput.files[0], tempUrl: null };
+        }
+
+        // Case 2: WPForms Dropzone has uploaded asynchronously.
+        // WPForms stores the uploaded temp path in a hidden input whose name
+        // is wpforms[fields][{field_id}] — look for it inside the form.
+        if ( formEl ) {
+            // The hidden input WPForms adds after Dropzone upload (value = temp file URL).
+            var hiddenSelectors = [
+                'input[name="wpforms[fields][' + mapping.image_field_id + ']"]',
+                'input[name="wpforms[fields][' + mapping.image_field_id + '][]"]',
+            ];
+            for ( var i = 0; i < hiddenSelectors.length; i++ ) {
+                var hidden = formEl.querySelector( hiddenSelectors[i] );
+                if ( hidden && hidden.value ) {
+                    return { file: null, tempUrl: hidden.value };
+                }
+            }
+
+            // Also check for a data attribute on the Dropzone preview container.
+            var preview = formEl.querySelector(
+                '[data-field-id="' + mapping.image_field_id + '"] .wpforms-file-upload-preview, ' +
+                '.wpforms-field[id*="field_' + mapping.image_field_id + '"] .dz-preview [data-dz-name]'
+            );
+            if ( preview ) {
+                var url = preview.getAttribute( 'data-url' ) || preview.getAttribute( 'data-src' );
+                if ( url ) {
+                    return { file: null, tempUrl: url };
+                }
+            }
+        }
+
+        return { file: null, tempUrl: null };
+    }
+
     function runAnalysis( mapping, uploadInput, btn, reviewPanel ) {
-        if ( ! uploadInput.files || uploadInput.files.length === 0 ) {
+        var formEl = findFormEl( mapping.form_id );
+        var source = getUploadedFile( formEl, uploadInput, mapping );
+
+        if ( ! source.file && ! source.tempUrl ) {
             renderError( reviewPanel, data.i18n.noFile );
             return;
         }
@@ -105,9 +238,14 @@
         setLoading( btn, reviewPanel, true );
 
         var formData = new FormData();
-        formData.append( 'image',      uploadInput.files[0] );
         formData.append( 'mapping_id', mapping.id );
         formData.append( 'form_id',    String( mapping.form_id ) );
+
+        if ( source.file ) {
+            formData.append( 'image', source.file );
+        } else {
+            formData.append( 'image_url', source.tempUrl );
+        }
 
         fetch( data.restUrl, {
             method:  'POST',
