@@ -109,36 +109,44 @@
             return;
         }
 
-        var uploadInput     = findUploadInput( formEl, mapping.form_id, mapping.image_field_id );
+        // Find the field container for the upload field.
+        // We only REQUIRE the container, not the upload input itself, because
+        // WPForms Modern (Dropzone) uploads move/hide the native <input type="file">.
         var uploadContainer = findFieldContainer( formEl, mapping.form_id, mapping.image_field_id );
 
-        if ( ! uploadInput ) {
-            // Log to console only when WP_DEBUG equivalent is set via a data attribute.
+        if ( ! uploadContainer ) {
+            // Last-resort: any element whose ID contains the field ID pattern.
+            var anyField = formEl.querySelector( '[id*="field_' + mapping.image_field_id + '"]' );
+            if ( anyField ) {
+                uploadContainer = anyField.closest( '.wpforms-field' ) || anyField.parentElement;
+            }
+        }
+
+        if ( ! uploadContainer ) {
             return;
         }
 
-        // If we couldn't find the container, insert relative to the input's parent.
-        var insertAfterEl = uploadContainer || uploadInput.closest( '.wpforms-field' ) || uploadInput.parentElement;
+        var insertAfterEl = uploadContainer;
 
         // Create and insert the review panel immediately after the field container.
         var reviewPanel = createReviewPanel( mapping );
         insertAfterEl.parentNode.insertBefore( reviewPanel, insertAfterEl.nextSibling );
 
         if ( mapping.auto_analyze ) {
-            // Trigger automatically when a file is chosen.
-            // WPForms Dropzone fires a change event on the hidden input after upload.
-            uploadInput.addEventListener( 'change', function () {
-                if ( uploadInput.files && uploadInput.files.length > 0 ) {
-                    runAnalysis( mapping, uploadInput, null, reviewPanel );
-                }
+            // Listen on any native file input inside the container.
+            var fileInputs = uploadContainer.querySelectorAll( 'input[type="file"]' );
+            fileInputs.forEach( function ( inp ) {
+                inp.addEventListener( 'change', function () {
+                    if ( inp.files && inp.files.length > 0 ) {
+                        runAnalysis( mapping, inp, null, reviewPanel );
+                    }
+                } );
             } );
-            // Also listen on the form element for WPForms' custom dropzone events.
-            formEl.addEventListener( 'wpformsFileUploadComplete', function ( e ) {
-                var detail = e.detail || {};
-                if ( String( detail.fieldId ) === String( mapping.image_field_id ) ) {
-                    runAnalysis( mapping, uploadInput, null, reviewPanel );
-                }
-            } );
+
+            // WPForms Dropzone fires change on the hidden input after async upload.
+            // Also watch for value changes on the hidden WPForms field input.
+            observeHiddenInput( formEl, mapping, reviewPanel, null );
+
         } else {
             // Insert the "Analyze Image" button between the container and the panel.
             var btn = createAnalyzeButton( mapping );
@@ -146,9 +154,87 @@
 
             btn.addEventListener( 'click', function ( e ) {
                 e.preventDefault();
+                // Resolve the upload input at click-time (Dropzone may have populated it by now).
+                var uploadInput = findUploadInput( formEl, mapping.form_id, mapping.image_field_id );
                 runAnalysis( mapping, uploadInput, btn, reviewPanel );
             } );
         }
+    }
+
+    /**
+     * Watch the hidden WPForms field input for value changes (Dropzone async uploads).
+     * When a value appears, trigger analysis automatically.
+     *
+     * @param {HTMLElement} formEl
+     * @param {Object}      mapping
+     * @param {HTMLElement} reviewPanel
+     * @param {HTMLElement|null} btn
+     */
+    function observeHiddenInput( formEl, mapping, reviewPanel, btn ) {
+        var selectors = [
+            'input[name="wpforms[fields][' + mapping.image_field_id + ']"]',
+            'input[name="wpforms[fields][' + mapping.image_field_id + '][]"]',
+        ];
+
+        var found = null;
+        for ( var i = 0; i < selectors.length; i++ ) {
+            found = formEl.querySelector( selectors[i] );
+            if ( found ) break;
+        }
+
+        if ( ! found ) {
+            // The hidden input may not exist yet (WPForms creates it after first upload).
+            // Use MutationObserver to wait for it.
+            if ( window.MutationObserver ) {
+                var obs = new MutationObserver( function ( mutations ) {
+                    for ( var j = 0; j < selectors.length; j++ ) {
+                        var el = formEl.querySelector( selectors[j] );
+                        if ( el ) {
+                            obs.disconnect();
+                            watchInputValue( el, mapping, reviewPanel, btn );
+                            return;
+                        }
+                    }
+                } );
+                obs.observe( formEl, { childList: true, subtree: true } );
+            }
+            return;
+        }
+
+        watchInputValue( found, mapping, reviewPanel, btn );
+    }
+
+    /**
+     * Fire analysis when the hidden WPForms input value changes to a non-empty string.
+     */
+    function watchInputValue( input, mapping, reviewPanel, btn ) {
+        var lastValue = input.value;
+
+        // If it already has a value (e.g. page reload with stored value), don't auto-fire.
+        var handler = function () {
+            if ( input.value && input.value !== lastValue ) {
+                lastValue = input.value;
+                runAnalysis( mapping, null, btn, reviewPanel );
+            }
+        };
+
+        input.addEventListener( 'change', handler );
+        input.addEventListener( 'input',  handler );
+
+        // Also poll briefly in case the event doesn't fire (some Dropzone versions).
+        var polls = 0;
+        var interval = setInterval( function () {
+            polls++;
+            if ( polls > 60 ) {
+                clearInterval( interval );
+                return;
+            }
+            if ( input.value && input.value !== lastValue ) {
+                lastValue = input.value;
+                clearInterval( interval );
+                runAnalysis( mapping, null, btn, reviewPanel );
+            }
+        }, 500 );
     }
 
     // -------------------------------------------------------------------------
@@ -184,21 +270,19 @@
      * hidden value input that WPForms populates after an async upload.
      *
      * @param {HTMLElement} formEl
-     * @param {HTMLInputElement} uploadInput
+     * @param {HTMLInputElement|null} uploadInput
      * @param {Object} mapping
      * @return {{ file: File|null, tempUrl: string|null }}
      */
     function getUploadedFile( formEl, uploadInput, mapping ) {
-        // Case 1: native file input still has the file (standard uploader).
+        // Case 1: native file input still has the file (standard / Classic uploader).
         if ( uploadInput && uploadInput.files && uploadInput.files.length > 0 ) {
             return { file: uploadInput.files[0], tempUrl: null };
         }
 
-        // Case 2: WPForms Dropzone has uploaded asynchronously.
-        // WPForms stores the uploaded temp path in a hidden input whose name
-        // is wpforms[fields][{field_id}] — look for it inside the form.
+        // Case 2: WPForms Dropzone has already uploaded the file asynchronously.
+        // WPForms stores the temp path/URL in a hidden input.
         if ( formEl ) {
-            // The hidden input WPForms adds after Dropzone upload (value = temp file URL).
             var hiddenSelectors = [
                 'input[name="wpforms[fields][' + mapping.image_field_id + ']"]',
                 'input[name="wpforms[fields][' + mapping.image_field_id + '][]"]',
@@ -206,19 +290,31 @@
             for ( var i = 0; i < hiddenSelectors.length; i++ ) {
                 var hidden = formEl.querySelector( hiddenSelectors[i] );
                 if ( hidden && hidden.value ) {
-                    return { file: null, tempUrl: hidden.value };
+                    // The value may be a JSON array or a plain URL/path.
+                    var val = hidden.value.trim();
+                    if ( val.charAt(0) === '[' ) {
+                        try {
+                            var arr = JSON.parse( val );
+                            if ( Array.isArray( arr ) && arr[0] ) {
+                                val = arr[0].file_url || arr[0].url || arr[0] || val;
+                            }
+                        } catch ( e ) { /* use val as-is */ }
+                    }
+                    if ( val ) {
+                        return { file: null, tempUrl: String( val ) };
+                    }
                 }
             }
 
-            // Also check for a data attribute on the Dropzone preview container.
+            // Case 3: look for a data-url on the Dropzone preview element.
             var preview = formEl.querySelector(
-                '[data-field-id="' + mapping.image_field_id + '"] .wpforms-file-upload-preview, ' +
-                '.wpforms-field[id*="field_' + mapping.image_field_id + '"] .dz-preview [data-dz-name]'
+                '.wpforms-field-file-upload .dz-preview [data-dz-name], ' +
+                '.wpforms-field-file-upload .wpforms-file-upload-preview'
             );
             if ( preview ) {
-                var url = preview.getAttribute( 'data-url' ) || preview.getAttribute( 'data-src' );
-                if ( url ) {
-                    return { file: null, tempUrl: url };
+                var previewUrl = preview.getAttribute( 'data-url' ) || preview.getAttribute( 'data-src' );
+                if ( previewUrl ) {
+                    return { file: null, tempUrl: previewUrl };
                 }
             }
         }

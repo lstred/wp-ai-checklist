@@ -13,6 +13,14 @@ class AICWF_Plugin {
 	private static $instance = null;
 
 	/**
+	 * Mappings collected from rendered forms during page output.
+	 * Keyed by mapping ID to prevent duplicates.
+	 *
+	 * @var array[]
+	 */
+	private $rendered_mappings = array();
+
+	/**
 	 * Return or create the singleton.
 	 */
 	public static function instance() {
@@ -34,10 +42,12 @@ class AICWF_Plugin {
 		add_action( 'rest_api_init',      array( $this, 'register_rest_routes' ) );
 		add_action( 'wp_enqueue_scripts', array( $this, 'register_frontend_assets' ) );
 
-		// Hook into WPForms' output action — fires whenever a form is actually rendered.
-		// This is reliable regardless of how the form is embedded (shortcode, block,
-		// page builder, widget, template file, etc.).
+		// Collect which forms with active mappings are rendered during page output.
 		add_action( 'wpforms_frontend_output', array( $this, 'on_wpforms_output' ), 5, 1 );
+
+		// Enqueue and localise scripts in wp_footer at priority 1, well before
+		// WordPress prints footer scripts at priority 20.
+		add_action( 'wp_footer', array( $this, 'maybe_enqueue_in_footer' ), 1 );
 
 		if ( is_admin() ) {
 			new AICWF_Admin();
@@ -119,12 +129,9 @@ class AICWF_Plugin {
 
 	/**
 	 * Fires every time WPForms renders a form on the front end.
-	 * Enqueues our scripts and localises data if the form has an active mapping.
+	 * Just collects matching mappings — does NOT enqueue yet.
 	 *
-	 * Hooked to wpforms_frontend_output (priority 5) so we fire before WPForms
-	 * outputs its own footer scripts.
-	 *
-	 * @param array $form_data  WPForms form data array (contains form_data['id']).
+	 * @param array $form_data  WPForms form data array (contains ['id']).
 	 */
 	public function on_wpforms_output( $form_data ) {
 		if ( is_admin() ) {
@@ -136,45 +143,29 @@ class AICWF_Plugin {
 			return;
 		}
 
-		$settings        = AICWF_Settings::get_settings();
-		$active_mappings = array_values(
-			array_filter(
-				$settings['mappings'] ?? array(),
-				function ( $m ) use ( $form_id ) {
-					return ! empty( $m['enabled'] )
-						&& (int) ( $m['form_id'] ?? 0 ) === $form_id;
-				}
-			)
-		);
-
-		if ( empty( $active_mappings ) ) {
-			return;
-		}
-
-		// Scripts may already be enqueued if two configured forms are on the same page.
-		if ( ! wp_script_is( 'aicwf-frontend', 'enqueued' ) ) {
-			$this->enqueue_frontend_scripts( $active_mappings );
-		} else {
-			// Merge this form's mappings into the already-localised data.
-			$this->merge_frontend_mappings( $active_mappings );
+		$settings = AICWF_Settings::get_settings();
+		foreach ( $settings['mappings'] ?? array() as $m ) {
+			if (
+				! empty( $m['enabled'] ) &&
+				(int) ( $m['form_id'] ?? 0 ) === $form_id
+			) {
+				// Key by mapping ID to prevent duplicates when form appears twice.
+				$this->rendered_mappings[ $m['id'] ] = $m;
+			}
 		}
 	}
 
 	/**
-	 * Append additional mappings to the already-localised aicwfData object.
-	 * Called when a second (or third) configured form appears on the same page.
-	 *
-	 * @param array[] $new_mappings
+	 * Called at wp_footer priority 1.
+	 * If any configured forms were rendered, enqueue scripts and localise data.
+	 * Running at priority 1 guarantees wp_localize_script is called well before
+	 * WordPress prints footer scripts at priority 20.
 	 */
-	private function merge_frontend_mappings( array $new_mappings ) {
-		// wp_add_inline_script appends JS that extends the already-set aicwfData.mappings.
-		$js_mappings = $this->build_js_mappings( $new_mappings );
-		$json        = wp_json_encode( $js_mappings );
-		wp_add_inline_script(
-			'aicwf-frontend',
-			'if(window.aicwfData){aicwfData.mappings=aicwfData.mappings.concat(' . $json . ');}',
-			'after'
-		);
+	public function maybe_enqueue_in_footer() {
+		if ( empty( $this->rendered_mappings ) || is_admin() ) {
+			return;
+		}
+		$this->enqueue_frontend_scripts( array_values( $this->rendered_mappings ) );
 	}
 
 	/**
