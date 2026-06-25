@@ -38,15 +38,17 @@ abstract class AICWF_AI_Provider_Interface {
 	 * @param array $checklist_labels  [ { field_id, choice_key, label } ]
 	 * @return string  Full prompt text.
 	 */
-	protected function build_prompt( array $checklist_labels ) {
+	protected function build_prompt( array $checklist_labels, $context = '' ) {
 		$labels_list = '';
 		foreach ( $checklist_labels as $item ) {
 			$labels_list .= '- ' . $item['label'] . "\n";
 		}
 		$labels_list = rtrim( $labels_list );
 
+		$context_line = $context ? "\nNote: you are looking at the {$context}." : '';
+
 		return <<<PROMPT
-You are analyzing a photo of a flooring display board.
+You are analyzing a photo of a flooring display board.{$context_line}
 
 Your task: Read EVERY visible display-card label in the image — even partially visible, angled, or distant ones. Thoroughness is critical. Missing a card is a worse error than reporting a low-confidence one.
 
