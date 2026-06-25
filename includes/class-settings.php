@@ -37,7 +37,7 @@ class AICWF_Settings {
 			'rate_limit_requests'  => 10,
 			'rate_limit_window'    => 3600,   // seconds
 			'max_file_size_mb'     => 10,
-			'confidence_threshold' => 0.65,
+			'confidence_threshold' => 0.50,
 			'mappings'             => array(),
 		);
 	}

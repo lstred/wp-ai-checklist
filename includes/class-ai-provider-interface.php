@@ -48,32 +48,34 @@ abstract class AICWF_AI_Provider_Interface {
 		return <<<PROMPT
 You are analyzing a photo of a flooring display board.
 
-Your task: Identify visible display-card names only.
+Your task: Read EVERY visible display-card label in the image — even partially visible, angled, or distant ones. Thoroughness is critical. Missing a card is a worse error than reporting a low-confidence one.
 
 Focus on:
-- Vertical card or binder labels
-- Individual product or display names printed on cards
+- Vertical card or binder labels (the narrow spine text on each sample binder)
+- Individual product/display names — scan the ENTIRE image systematically, left-to-right, top-to-bottom
+- Read small text even if you are not fully certain — report it in low_confidence rather than skipping it
 
-Ignore completely (do NOT report these as matched items):
-- Brand or manufacturer logos
+Ignore completely (do NOT report these):
+- Brand or manufacturer logos (e.g. "nrf select", "Shaw", "Mohawk")
 - Store header signs and banners
-- Website URLs and slogans
+- Website URLs (.com addresses)
+- Slogans (e.g. "The Best in Today's Flooring")
 - Pattern or category tab labels
-- Fiber content labels and technical specifications
-- Dimensions, icons, and decorative signage
-- Repeated brand names that are not individual display cards
+- Fiber content labels ("nylon", "polyester", "bioloop")
+- Technical specs (dimensions, weight, oz)
+- Decorative signage
 
-Checklist of expected display-card names (compare what you see to this list):
+Checklist of expected display-card names (compare EVERYTHING you read to this list):
 {$labels_list}
 
 Rules:
-1. For each visible display card that matches a checklist item → add to "matched_checklist_items".
-2. For visible display cards NOT in the checklist → add to "unmatched_visible_cards".
-3. For text you deliberately ignored → add to "ignored_text".
-4. For uncertain or partial matches → add to "low_confidence".
-5. Do NOT invent or guess names. Only report text you actually see.
-6. Prefer using the exact checklist label wording when it matches.
-7. If a detection could match multiple checklist items without a clear winner, put it in "low_confidence".
+1. Scan every card systematically. Do not stop after finding some matches.
+2. For each visible label that matches a checklist item → matched_checklist_items. Use confidence 0.95 for clear reads, lower for partial/angled text.
+3. For visible labels NOT in the checklist → unmatched_visible_cards.
+4. For text you deliberately ignored → ignored_text.
+5. For text you can partially read or are unsure about → low_confidence. PREFER this over skipping.
+6. Do NOT invent names. Only report text you can actually see.
+7. Roman numeral variants (II vs 2) and minor spacing differences should still be matched.
 
 Return ONLY valid JSON matching this exact schema. No markdown fences, no explanation:
 {

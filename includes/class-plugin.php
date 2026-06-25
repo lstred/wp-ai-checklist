@@ -222,7 +222,7 @@ class AICWF_Plugin {
 				'error'          => __( 'Analysis failed. Please try again.', 'ai-checklist-wpf' ),
 				'noFile'         => __( 'Please upload an image first.', 'ai-checklist-wpf' ),
 				'reviewTitle'    => __( 'AI Analysis Results', 'ai-checklist-wpf' ),
-				'matchedTitle'   => __( 'Matched &amp; Updated', 'ai-checklist-wpf' ),
+				'matchedTitle'   => __( 'Matched & Updated', 'ai-checklist-wpf' ),
 				'unmatchedTitle' => __( 'Visible cards not in checklist', 'ai-checklist-wpf' ),
 				'lowConfTitle'   => __( 'Low Confidence Detections', 'ai-checklist-wpf' ),
 				'ignoredTitle'   => __( 'Ignored Text', 'ai-checklist-wpf' ),
