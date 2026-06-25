@@ -1,0 +1,105 @@
+/**
+ * AI Display Checklist for WPForms – Admin styles.
+ */
+
+/* ---- Wrap ---- */
+.aicwf-admin-wrap {
+    max-width: 960px;
+}
+
+/* ---- Tab content ---- */
+.aicwf-tab-content {
+    background:   #fff;
+    border:       1px solid #c3c4c7;
+    border-top:   none;
+    padding:      24px;
+    margin-bottom:20px;
+}
+
+/* ---- Save notice ---- */
+.aicwf-save-notice {
+    margin:        12px 0;
+    padding:       10px 16px;
+    border-radius: 4px;
+    border-left:   4px solid #72aee6;
+}
+
+.aicwf-save-notice.notice-success { border-color: #00a32a; background: #edfaef; color: #1d6f42; }
+.aicwf-save-notice.notice-error   { border-color: #d63638; background: #fcf0f1; color: #9c1a1a; }
+
+/* ---- Test connection result ---- */
+.aicwf-test-result {
+    margin-left: 10px;
+    font-weight: 600;
+}
+
+.aicwf-test-result.aicwf-success { color: #00a32a; }
+.aicwf-test-result.aicwf-error   { color: #d63638; }
+
+/* ---- Key saved indicator ---- */
+.aicwf-key-saved {
+    color: #00a32a;
+    font-weight: 600;
+}
+
+/* ---- Warning text ---- */
+.aicwf-warning {
+    color: #996800;
+}
+
+/* ---- API key toggle ---- */
+.aicwf-toggle-key {
+    margin-left: 8px;
+    vertical-align: middle;
+}
+
+/* ---- Mappings table ---- */
+.aicwf-mappings-table th,
+.aicwf-mappings-table td {
+    vertical-align: middle;
+}
+
+.aicwf-no-mappings {
+    color: #787c82;
+    font-style: italic;
+}
+
+/* ---- Status badges ---- */
+.aicwf-status {
+    display:       inline-block;
+    padding:       3px 10px;
+    border-radius: 12px;
+    font-size:     12px;
+    font-weight:   600;
+}
+
+.aicwf-status-active   { background: #d1fae5; color: #065f46; }
+.aicwf-status-inactive { background: #f3f4f6; color: #6b7280; }
+
+/* ---- Mapping editor ---- */
+.aicwf-mapping-editor {
+    background:    #f9f9f9;
+    border:        1px solid #c3c4c7;
+    border-radius: 4px;
+    padding:       20px 24px;
+    margin:        16px 0;
+}
+
+.aicwf-mapping-editor h3 {
+    margin-top: 0;
+}
+
+/* ---- Checkbox group for checklist field selection ---- */
+.aicwf-checkbox-group {
+    display:   flex;
+    flex-wrap: wrap;
+    gap:       10px 24px;
+}
+
+.aicwf-cb-label {
+    display:     flex;
+    align-items: center;
+    gap:         6px;
+    cursor:      pointer;
+    white-space: nowrap;
+}

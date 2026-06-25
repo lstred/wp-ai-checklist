@@ -1,0 +1,211 @@
+/**
+ * AI Display Checklist for WPForms – Front-end styles.
+ *
+ * Scoped to .aicwf-* classes; does not affect any other elements.
+ */
+
+/* ---- Analyze button ---- */
+.aicwf-analyze-btn {
+    display:      inline-flex;
+    align-items:  center;
+    gap:          6px;
+    margin-top:   10px;
+    padding:      8px 18px;
+    background:   #2271b1;
+    color:        #fff;
+    border:       none;
+    border-radius:4px;
+    font-size:    14px;
+    font-weight:  600;
+    cursor:       pointer;
+    transition:   background 0.15s ease;
+}
+
+.aicwf-analyze-btn:hover:not(:disabled) {
+    background: #135e96;
+}
+
+.aicwf-analyze-btn:disabled {
+    opacity: 0.6;
+    cursor:  not-allowed;
+}
+
+/* ---- Review panel ---- */
+.aicwf-review-panel {
+    margin-top:    14px;
+    border:        1px solid #c3c4c7;
+    border-radius: 6px;
+    overflow:      hidden;
+    font-size:     14px;
+    line-height:   1.5;
+}
+
+.aicwf-panel-inner {
+    padding: 16px 20px;
+}
+
+.aicwf-panel-inner--error {
+    background: #fcf0f1;
+    border-color: #d63638;
+}
+
+/* ---- Panel header ---- */
+.aicwf-panel-header {
+    display:         flex;
+    align-items:     flex-start;
+    justify-content: space-between;
+    gap:             12px;
+    margin-bottom:   12px;
+}
+
+.aicwf-panel-header h3 {
+    margin:    0;
+    font-size: 16px;
+    color:     #1d2327;
+}
+
+.aicwf-dismiss {
+    background: none;
+    border:     none;
+    font-size:  22px;
+    line-height:1;
+    color:      #787c82;
+    cursor:     pointer;
+    padding:    0 4px;
+    flex-shrink:0;
+}
+
+.aicwf-dismiss:hover {
+    color: #d63638;
+}
+
+/* ---- Sections ---- */
+.aicwf-section {
+    margin-bottom: 14px;
+}
+
+.aicwf-section:last-child {
+    margin-bottom: 0;
+}
+
+.aicwf-section h4 {
+    margin:      0 0 6px;
+    font-size:   13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color:       #50575e;
+}
+
+.aicwf-section ul {
+    margin:      0;
+    padding:     0;
+    list-style:  none;
+}
+
+.aicwf-section ul li {
+    padding:       4px 0;
+    border-bottom: 1px solid #f0f0f1;
+    display:       flex;
+    align-items:   center;
+    gap:           8px;
+    flex-wrap:     wrap;
+}
+
+.aicwf-section ul li:last-child {
+    border-bottom: none;
+}
+
+/* ---- Section colour coding ---- */
+.aicwf-section--matched {
+    background: #f0f6fc;
+    border:     1px solid #c2d7ef;
+    border-radius: 4px;
+    padding:    10px 14px;
+}
+
+.aicwf-section--unmatched {
+    background: #fffaed;
+    border:     1px solid #f0c33c;
+    border-radius: 4px;
+    padding:    10px 14px;
+}
+
+.aicwf-section--low-conf {
+    background: #f8f8f8;
+    border:     1px solid #ddd;
+    border-radius: 4px;
+    padding:    10px 14px;
+}
+
+.aicwf-section--ignored summary {
+    cursor:      pointer;
+    font-size:   12px;
+    color:       #787c82;
+    user-select: none;
+}
+
+.aicwf-section--ignored ul li {
+    font-size: 12px;
+    color:     #787c82;
+}
+
+/* ---- Badges ---- */
+.aicwf-badge {
+    display:       inline-block;
+    padding:       2px 8px;
+    border-radius: 12px;
+    font-size:     11px;
+    font-weight:   600;
+    white-space:   nowrap;
+}
+
+.aicwf-badge--check {
+    background: #d1fae5;
+    color:      #065f46;
+}
+
+.aicwf-badge--uncheck {
+    background: #fee2e2;
+    color:      #991b1b;
+}
+
+/* ---- Confidence indicator ---- */
+.aicwf-conf {
+    font-size:  11px;
+    color:      #787c82;
+    white-space:nowrap;
+}
+
+/* ---- Label ---- */
+.aicwf-label {
+    font-weight: 500;
+}
+
+/* ---- Count badge ---- */
+.aicwf-count {
+    font-weight: 400;
+    color:       #787c82;
+}
+
+/* ---- No-matches message ---- */
+.aicwf-no-matches {
+    color:     #787c82;
+    font-style:italic;
+    margin:    0;
+}
+
+/* ---- Error message ---- */
+.aicwf-error-msg {
+    color:  #d63638;
+    margin: 0;
+}
+
+/* ---- AI-changed checkbox highlight ---- */
+.wpforms-field-checkbox li.aicwf-ai-changed label,
+.wpforms-field-radio    li.aicwf-ai-changed label {
+    background:    #fffbe6;
+    border-radius: 3px;
+    padding:       1px 4px;
+    transition:    background 0.4s ease;
+}
