@@ -4,30 +4,47 @@
  * Scoped to .aicwf-* classes; does not affect any other elements.
  */
 
-/* ---- Analyze button ---- */
-.aicwf-analyze-btn {
-    display:      inline-flex;
-    align-items:  center;
-    gap:          6px;
-    margin-top:   10px;
-    padding:      8px 18px;
-    background:   #2271b1;
-    color:        #fff;
-    border:       none;
-    border-radius:4px;
-    font-size:    14px;
-    font-weight:  600;
-    cursor:       pointer;
-    transition:   background 0.15s ease;
+/* ---- Analyze button ----
+   Use high specificity + !important to override Flatsome and other
+   theme button resets that set background/color to transparent/inherit.
+---- */
+button.aicwf-analyze-btn,
+.wpforms-container button.aicwf-analyze-btn,
+form button.aicwf-analyze-btn {
+    display:          inline-flex !important;
+    align-items:      center !important;
+    gap:              6px !important;
+    margin:           16px 0 8px !important;
+    padding:          10px 22px !important;
+    background:       #2271b1 !important;
+    background-color: #2271b1 !important;
+    color:            #ffffff !important;
+    border:           none !important;
+    border-radius:    4px !important;
+    font-size:        14px !important;
+    font-weight:      600 !important;
+    line-height:      1.4 !important;
+    cursor:           pointer !important;
+    box-shadow:       0 2px 4px rgba(0,0,0,0.15) !important;
+    transition:       background 0.15s ease !important;
+    text-transform:   none !important;
+    letter-spacing:   normal !important;
+    width:            auto !important;
+    opacity:          1 !important;
 }
 
-.aicwf-analyze-btn:hover:not(:disabled) {
-    background: #135e96;
+button.aicwf-analyze-btn:hover:not(:disabled),
+.wpforms-container button.aicwf-analyze-btn:hover:not(:disabled),
+form button.aicwf-analyze-btn:hover:not(:disabled) {
+    background:       #135e96 !important;
+    background-color: #135e96 !important;
+    color:            #ffffff !important;
 }
 
-.aicwf-analyze-btn:disabled {
-    opacity: 0.6;
-    cursor:  not-allowed;
+button.aicwf-analyze-btn:disabled,
+form button.aicwf-analyze-btn:disabled {
+    opacity: 0.6 !important;
+    cursor:  not-allowed !important;
 }
 
 /* ---- Review panel ---- */

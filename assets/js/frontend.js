@@ -285,24 +285,89 @@
     // -------------------------------------------------------------------------
 
     /**
-     * Get the file to analyze.
-     * Returns a File object if the native input still holds it, otherwise
-     * looks for the WPForms Dropzone-uploaded temp-file URL stored in the
-     * hidden value input that WPForms populates after an async upload.
+     * Find the Dropzone instance attached to the upload field and return
+     * the first accepted File object.  Dropzone keeps file objects in memory
+     * even after the async upload completes, so the File is always available.
      *
      * @param {HTMLElement} formEl
+     * @param {number}      fieldId
+     * @return {File|null}
+     */
+    function getDropzoneFile( formEl, fieldId ) {
+        if ( ! formEl ) {
+            return null;
+        }
+
+        // WPForms Modern uploader: Dropzone is initialised on .wpforms-uploader
+        // inside the field container.  The Dropzone instance is stored on the
+        // element as .dropzone property by Dropzone.js.
+        var uploaderSelectors = [
+            '[id*="field_' + fieldId + '-container"] .wpforms-uploader',
+            '[id*="field_' + fieldId + '"] .wpforms-uploader',
+            '.wpforms-field-file-upload .wpforms-uploader',
+        ];
+
+        for ( var s = 0; s < uploaderSelectors.length; s++ ) {
+            var el = formEl.querySelector( uploaderSelectors[s] );
+            if ( ! el ) continue;
+
+            var dz = el.dropzone || ( el.getAttribute && el.getAttribute( 'data-dz' ) );
+            if ( el.dropzone ) {
+                var accepted = el.dropzone.getAcceptedFiles ? el.dropzone.getAcceptedFiles() : [];
+                if ( accepted.length > 0 ) {
+                    console.log( '[AICWF] Got file from Dropzone.getAcceptedFiles:', accepted[0].name );
+                    return accepted[0];
+                }
+                // Dropzone may list it only in .files (queued/uploaded)
+                var allFiles = el.dropzone.files || [];
+                if ( allFiles.length > 0 ) {
+                    console.log( '[AICWF] Got file from Dropzone.files:', allFiles[0].name );
+                    return allFiles[0];
+                }
+            }
+        }
+
+        // Fallback: check every element inside the form that has a .dropzone property.
+        var allEls = formEl.querySelectorAll( '*' );
+        for ( var i = 0; i < allEls.length; i++ ) {
+            if ( allEls[i].dropzone ) {
+                var f = allEls[i].dropzone.getAcceptedFiles ? allEls[i].dropzone.getAcceptedFiles() : allEls[i].dropzone.files || [];
+                if ( f.length > 0 ) {
+                    console.log( '[AICWF] Got file from fallback Dropzone scan:', f[0].name );
+                    return f[0];
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Get the file to analyze — tries all possible sources in priority order.
+     *
+     * 1. Native file input (WPForms Classic uploader)
+     * 2. Dropzone in-memory File object (WPForms Modern uploader)
+     * 3. Hidden input value set by WPForms after async upload
+     *
+     * @param {HTMLElement}      formEl
      * @param {HTMLInputElement|null} uploadInput
-     * @param {Object} mapping
+     * @param {Object}           mapping
      * @return {{ file: File|null, tempUrl: string|null }}
      */
     function getUploadedFile( formEl, uploadInput, mapping ) {
-        // Case 1: native file input still has the file (standard / Classic uploader).
+        // 1. Native file input (Classic uploader).
         if ( uploadInput && uploadInput.files && uploadInput.files.length > 0 ) {
+            console.log( '[AICWF] File source: native input' );
             return { file: uploadInput.files[0], tempUrl: null };
         }
 
-        // Case 2: WPForms Dropzone has already uploaded the file asynchronously.
-        // WPForms stores the temp path/URL in a hidden input.
+        // 2. Dropzone in-memory file object (Modern uploader).
+        var dzFile = getDropzoneFile( formEl, mapping.image_field_id );
+        if ( dzFile ) {
+            return { file: dzFile, tempUrl: null };
+        }
+
+        // 3. Hidden input WPForms writes after async upload.
         if ( formEl ) {
             var hiddenSelectors = [
                 'input[name="wpforms[fields][' + mapping.image_field_id + ']"]',
@@ -310,28 +375,27 @@
             ];
             for ( var i = 0; i < hiddenSelectors.length; i++ ) {
                 var hidden = formEl.querySelector( hiddenSelectors[i] );
-                if ( hidden && hidden.value ) {
-                    // The value may be a JSON array or a plain URL/path.
-                    var val = hidden.value.trim();
-                    if ( val.charAt(0) === '[' ) {
-                        try {
-                            var arr = JSON.parse( val );
-                            if ( Array.isArray( arr ) && arr[0] ) {
-                                val = arr[0].file_url || arr[0].url || arr[0] || val;
-                            }
-                        } catch ( e ) { /* use val as-is */ }
-                    }
-                    if ( val ) {
-                        return { file: null, tempUrl: String( val ) };
-                    }
+                if ( ! hidden || ! hidden.value ) continue;
+
+                var val = hidden.value.trim();
+                if ( val.charAt(0) === '[' || val.charAt(0) === '{' ) {
+                    try {
+                        var parsed = JSON.parse( val );
+                        if ( Array.isArray( parsed ) && parsed[0] ) {
+                            val = parsed[0].file_url || parsed[0].url || parsed[0] || val;
+                        } else if ( parsed && ( parsed.file_url || parsed.url ) ) {
+                            val = parsed.file_url || parsed.url;
+                        }
+                    } catch ( e ) { /* use val as-is */ }
+                }
+                if ( val ) {
+                    console.log( '[AICWF] File source: hidden input URL', val );
+                    return { file: null, tempUrl: String( val ) };
                 }
             }
 
-            // Case 3: look for a data-url on the Dropzone preview element.
-            var preview = formEl.querySelector(
-                '.wpforms-field-file-upload .dz-preview [data-dz-name], ' +
-                '.wpforms-field-file-upload .wpforms-file-upload-preview'
-            );
+            // Last resort: Dropzone preview data-url attribute.
+            var preview = formEl.querySelector( '.dz-preview [data-dz-name]' );
             if ( preview ) {
                 var previewUrl = preview.getAttribute( 'data-url' ) || preview.getAttribute( 'data-src' );
                 if ( previewUrl ) {
@@ -340,6 +404,7 @@
             }
         }
 
+        console.warn( '[AICWF] getUploadedFile: no file found. Dropzone scan result was null.' );
         return { file: null, tempUrl: null };
     }
 
