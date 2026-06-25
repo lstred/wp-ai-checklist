@@ -40,14 +40,18 @@ class AICWF_Plugin {
 
 	private function init_hooks() {
 		add_action( 'rest_api_init',      array( $this, 'register_rest_routes' ) );
-		add_action( 'wp_enqueue_scripts', array( $this, 'register_frontend_assets' ) );
 
-		// Collect which forms with active mappings are rendered during page output.
+		// Enqueue assets early (during wp_enqueue_scripts) on every front-end page
+		// that has at least one active mapping. The JS itself handles the case
+		// where the configured form is not present on the page.
+		add_action( 'wp_enqueue_scripts', array( $this, 'register_and_enqueue_frontend_assets' ) );
+
+		// Collect rendered form IDs so we can pass only relevant mappings to JS.
 		add_action( 'wpforms_frontend_output', array( $this, 'on_wpforms_output' ), 5, 1 );
 
-		// Enqueue and localise scripts in wp_footer at priority 1, well before
-		// WordPress prints footer scripts at priority 20.
-		add_action( 'wp_footer', array( $this, 'maybe_enqueue_in_footer' ), 1 );
+		// Inject aicwfData via wp_add_inline_script at wp_footer priority 1.
+		// This runs before WordPress prints queued footer scripts at priority 20.
+		add_action( 'wp_footer', array( $this, 'inject_frontend_data' ), 1 );
 
 		if ( is_admin() ) {
 			new AICWF_Admin();
@@ -107,65 +111,136 @@ class AICWF_Plugin {
 	// -------------------------------------------------------------------------
 
 	/**
-	 * Register (but do not enqueue) frontend assets early so they are available
-	 * to wp_enqueue later in the same request.
+	 * Register and enqueue frontend assets during wp_enqueue_scripts.
+	 * We enqueue early (not lazily) so the script tag is definitely in the
+	 * queue before wp_footer fires. The JS handles pages where no configured
+	 * form is present by exiting silently if aicwfData.mappings is empty.
 	 */
-	public function register_frontend_assets() {
-		wp_register_style(
+	public function register_and_enqueue_frontend_assets() {
+		if ( is_admin() ) {
+			return;
+		}
+
+		$settings = AICWF_Settings::get_settings();
+		$has_active = ! empty(
+			array_filter(
+				$settings['mappings'] ?? array(),
+				function ( $m ) {
+					return ! empty( $m['enabled'] ) && ! empty( $m['form_id'] );
+				}
+			)
+		);
+
+		if ( ! $has_active ) {
+			return;
+		}
+
+		wp_enqueue_style(
 			'aicwf-frontend',
 			AICWF_PLUGIN_URL . 'assets/css/frontend.css',
 			array(),
 			AICWF_VERSION
 		);
 
-		wp_register_script(
+		wp_enqueue_script(
 			'aicwf-frontend',
 			AICWF_PLUGIN_URL . 'assets/js/frontend.js',
 			array( 'jquery' ),
 			AICWF_VERSION,
-			true
+			true   // load in footer.
 		);
 	}
 
 	/**
 	 * Fires every time WPForms renders a form on the front end.
-	 * Just collects matching mappings — does NOT enqueue yet.
+	 * Collects matching mappings keyed by ID (deduplicates multi-render).
 	 *
-	 * @param array $form_data  WPForms form data array (contains ['id']).
+	 * @param array $form_data  WPForms form data array.
 	 */
 	public function on_wpforms_output( $form_data ) {
 		if ( is_admin() ) {
 			return;
 		}
 
-		$form_id = (int) ( $form_data['id'] ?? 0 );
+		$form_id  = (int) ( $form_data['id'] ?? 0 );
 		if ( ! $form_id ) {
 			return;
 		}
 
 		$settings = AICWF_Settings::get_settings();
 		foreach ( $settings['mappings'] ?? array() as $m ) {
-			if (
-				! empty( $m['enabled'] ) &&
-				(int) ( $m['form_id'] ?? 0 ) === $form_id
-			) {
-				// Key by mapping ID to prevent duplicates when form appears twice.
+			if ( ! empty( $m['enabled'] ) && (int) ( $m['form_id'] ?? 0 ) === $form_id ) {
 				$this->rendered_mappings[ $m['id'] ] = $m;
 			}
 		}
 	}
 
 	/**
-	 * Called at wp_footer priority 1.
-	 * If any configured forms were rendered, enqueue scripts and localise data.
-	 * Running at priority 1 guarantees wp_localize_script is called well before
-	 * WordPress prints footer scripts at priority 20.
+	 * Inject aicwfData via wp_add_inline_script at wp_footer priority 1.
+	 *
+	 * wp_add_inline_script( ..., 'before' ) inserts a <script> tag immediately
+	 * before the aicwf-frontend <script> tag when WordPress prints footer
+	 * scripts at priority 20.  This is more reliable than wp_localize_script
+	 * called from the footer because it does not depend on the script already
+	 * being in a "not yet printed" state.
+	 *
+	 * Mappings: prefer ones collected from rendered forms; fall back to all
+	 * active mappings so the button still appears even if wpforms_frontend_output
+	 * did not fire (e.g. some page builder / caching configurations).
 	 */
-	public function maybe_enqueue_in_footer() {
-		if ( empty( $this->rendered_mappings ) || is_admin() ) {
+	public function inject_frontend_data() {
+		if ( is_admin() || ! wp_script_is( 'aicwf-frontend', 'enqueued' ) ) {
 			return;
 		}
-		$this->enqueue_frontend_scripts( array_values( $this->rendered_mappings ) );
+
+		// Use mappings from rendered forms; fall back to all active mappings.
+		if ( ! empty( $this->rendered_mappings ) ) {
+			$mappings = array_values( $this->rendered_mappings );
+		} else {
+			$settings = AICWF_Settings::get_settings();
+			$mappings = array_values(
+				array_filter(
+					$settings['mappings'] ?? array(),
+					function ( $m ) {
+						return ! empty( $m['enabled'] ) && ! empty( $m['form_id'] );
+					}
+				)
+			);
+		}
+
+		if ( empty( $mappings ) ) {
+			return;
+		}
+
+		$data = array(
+			'restUrl'  => esc_url_raw( rest_url( 'ai-checklist/v1/analyze' ) ),
+			'nonce'    => wp_create_nonce( 'wp_rest' ),
+			'mappings' => $this->build_js_mappings( $mappings ),
+			'i18n'     => array(
+				'analyzing'      => __( 'Analyzing image, please wait…', 'ai-checklist-wpf' ),
+				'analyzeBtn'     => __( 'Analyze Image', 'ai-checklist-wpf' ),
+				'error'          => __( 'Analysis failed. Please try again.', 'ai-checklist-wpf' ),
+				'noFile'         => __( 'Please upload an image first.', 'ai-checklist-wpf' ),
+				'reviewTitle'    => __( 'AI Analysis Results', 'ai-checklist-wpf' ),
+				'matchedTitle'   => __( 'Matched &amp; Updated', 'ai-checklist-wpf' ),
+				'unmatchedTitle' => __( 'Visible cards not in checklist', 'ai-checklist-wpf' ),
+				'lowConfTitle'   => __( 'Low Confidence Detections', 'ai-checklist-wpf' ),
+				'ignoredTitle'   => __( 'Ignored Text', 'ai-checklist-wpf' ),
+				'noMatches'      => __( 'No checklist items were matched.', 'ai-checklist-wpf' ),
+				'dismiss'        => __( 'Dismiss', 'ai-checklist-wpf' ),
+				'checked'        => __( 'Checked', 'ai-checklist-wpf' ),
+				'unchecked'      => __( 'Unchecked', 'ai-checklist-wpf' ),
+				'confidence'     => __( 'Confidence', 'ai-checklist-wpf' ),
+			),
+		);
+
+		// Output as a plain var assignment BEFORE the script tag so it is available
+		// the moment frontend.js executes.
+		wp_add_inline_script(
+			'aicwf-frontend',
+			'var aicwfData = ' . wp_json_encode( $data ) . ';',
+			'before'
+		);
 	}
 
 	/**
@@ -195,38 +270,8 @@ class AICWF_Plugin {
 		);
 	}
 
-	private function enqueue_frontend_scripts( array $page_mappings ) {
-		wp_enqueue_style( 'aicwf-frontend' );
-		wp_enqueue_script( 'aicwf-frontend' );
-
-		$js_mappings = $this->build_js_mappings( $page_mappings );
-
-		wp_localize_script(
-			'aicwf-frontend',
-			'aicwfData',
-			array(
-				'restUrl'  => esc_url_raw( rest_url( 'ai-checklist/v1/analyze' ) ),
-				'nonce'    => wp_create_nonce( 'wp_rest' ),
-				'mappings' => array_values( $js_mappings ),
-				'i18n'     => array(
-					'analyzing'      => __( 'Analyzing image, please wait…', 'ai-checklist-wpf' ),
-					'analyzeBtn'     => __( 'Analyze Image', 'ai-checklist-wpf' ),
-					'error'          => __( 'Analysis failed. Please try again.', 'ai-checklist-wpf' ),
-					'noFile'         => __( 'Please select an image to upload first.', 'ai-checklist-wpf' ),
-					'reviewTitle'    => __( 'AI Analysis Results', 'ai-checklist-wpf' ),
-					'matchedTitle'   => __( 'Matched &amp; Updated', 'ai-checklist-wpf' ),
-					'unmatchedTitle' => __( 'Visible cards not in checklist', 'ai-checklist-wpf' ),
-					'lowConfTitle'   => __( 'Low Confidence Detections', 'ai-checklist-wpf' ),
-					'ignoredTitle'   => __( 'Ignored Text', 'ai-checklist-wpf' ),
-					'noMatches'      => __( 'No checklist items were matched.', 'ai-checklist-wpf' ),
-					'dismiss'        => __( 'Dismiss', 'ai-checklist-wpf' ),
-					'checked'        => __( 'Checked', 'ai-checklist-wpf' ),
-					'unchecked'      => __( 'Unchecked', 'ai-checklist-wpf' ),
-					'confidence'     => __( 'Confidence', 'ai-checklist-wpf' ),
-				),
-			)
-		);
-	}
+	// enqueue_frontend_scripts() removed — replaced by
+	// register_and_enqueue_frontend_assets() + inject_frontend_data().
 
 	// -------------------------------------------------------------------------
 	// REST callbacks

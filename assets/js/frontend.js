@@ -17,10 +17,20 @@
 (function () {
     'use strict';
 
-    var data = window.aicwfData;
-    if ( ! data || ! Array.isArray( data.mappings ) || data.mappings.length === 0 ) {
+    // ---- Diagnostics: visible in browser DevTools console ----
+    if ( typeof window.aicwfData === 'undefined' ) {
+        console.warn( '[AICWF] aicwfData is not defined. The plugin script loaded but received no data from WordPress. Check that the plugin files are up to date on the server and that at least one mapping is enabled.' );
         return;
     }
+
+    var data = window.aicwfData;
+
+    if ( ! Array.isArray( data.mappings ) || data.mappings.length === 0 ) {
+        console.warn( '[AICWF] aicwfData.mappings is empty. No active mappings found.' );
+        return;
+    }
+
+    console.log( '[AICWF] Loaded. Mappings:', data.mappings.length, data.mappings );
 
     // -------------------------------------------------------------------------
     // Initialise each mapping once the DOM is ready.
@@ -103,15 +113,17 @@
     }
 
     function initMapping( mapping ) {
+        console.log( '[AICWF] initMapping for form', mapping.form_id, 'image field', mapping.image_field_id );
+
         var formEl = findFormEl( mapping.form_id );
         if ( ! formEl ) {
-            // Form not on this page — silent return is correct.
+            console.warn( '[AICWF] Form element not found for form_id', mapping.form_id,
+                '— tried #wpforms-form-' + mapping.form_id + ' and data-formid selectors.' );
             return;
         }
+        console.log( '[AICWF] Found form element:', formEl.id || formEl );
 
         // Find the field container for the upload field.
-        // We only REQUIRE the container, not the upload input itself, because
-        // WPForms Modern (Dropzone) uploads move/hide the native <input type="file">.
         var uploadContainer = findFieldContainer( formEl, mapping.form_id, mapping.image_field_id );
 
         if ( ! uploadContainer ) {
@@ -123,8 +135,10 @@
         }
 
         if ( ! uploadContainer ) {
+            console.warn( '[AICWF] Upload field container not found for field_id', mapping.image_field_id );
             return;
         }
+        console.log( '[AICWF] Found upload container:', uploadContainer.id || uploadContainer );
 
         var insertAfterEl = uploadContainer;
 
